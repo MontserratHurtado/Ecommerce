@@ -1,0 +1,8 @@
+{
+    "require": {
+        "phpmailer/phpmailer": "^7.1",
+        "vlucas/phpdotenv": "^5.6",
+        "openpayu/openpayu_php_sdk": "^2.4",
+        "openpay/sdk": "^3.1"
+    }
+}
