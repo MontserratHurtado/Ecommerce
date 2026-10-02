@@ -37,6 +37,21 @@ if (isset($_SESSION['username'])) {
     if (mysqli_num_rows($result) > 0) {
         $row = mysqli_fetch_assoc($result);
         $rolSesion = (int)$row['rol'];
+
+        // ===============================================================
+        // FASE 3.3 - CONTROL DE ACCESO POR ROLES (RBAC)
+        // Bloquea el acceso a cualquier usuario que no sea Administrador (1)
+        // ===============================================================
+        if ($rolSesion !== 1) {
+            $_SESSION['alert'] = [
+                'title' => 'ACCESO DENEGADO',
+                'message' => 'No tienes permisos de Administrador para acceder a la gestión de usuarios.',
+                'icon' => 'error'
+            ];
+            header('Location: tienda-en-linea.php');
+            exit();
+        }
+
     } else {
         $_SESSION['alert'] = [
             'title' => 'USUARIO NO ENCONTRADO',
@@ -129,12 +144,6 @@ if (isset($_SESSION['username'])) {
                                                     </td>
                                                     <td>
                                                         <?php
-
-
-                                                        // ============================
-                                                        // BOTÓN EDITAR
-                                                        // ============================
-
                                                         // Rol 1: puede editar todos
                                                         if ($rolSesion == 1) {
                                                         ?>
@@ -144,19 +153,7 @@ if (isset($_SESSION['username'])) {
                                                         <?php
                                                         }
 
-                                                        // Rol 2: solo su propia fila
-                                                        if ($rolSesion == 2 && $registro['username'] === $username) {
-                                                        ?>
-                                                            <a href="editarusuario.php?id=<?= $registro['id']; ?>" class="btn btn-warning btn-sm m-1">
-                                                                <i class="bi bi-pencil-square"></i>
-                                                            </a>
-                                                        <?php
-                                                        }
-
-                                                        // ============================
-                                                        // BOTÓN ELIMINAR (solo rol 1)
-                                                        // ============================
-
+                                                        // Botón eliminar (solo rol 1)
                                                         if ($rolSesion == 1 && $registro['id'] != 1) {
                                                         ?>
                                                             <form action="codeusuarios.php" method="POST" class="d-inline">
@@ -168,7 +165,6 @@ if (isset($_SESSION['username'])) {
                                                         }
                                                         ?>
                                                     </td>
-
                                                 </tr>
                                         <?php
                                             }
@@ -253,7 +249,5 @@ if (isset($_SESSION['username'])) {
             });
         });
     </script>
-
 </body>
-
 </html>

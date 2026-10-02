@@ -7,11 +7,6 @@ require 'dbcon.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-//require 'PHPMailer/src/PHPMailer.php';
-//require 'PHPMailer/src/SMTP.php';
-//require 'PHPMailer/src/Exception.php';
-
-
 require 'vendor/autoload.php';
 
 if (isset($_POST['delete'])) {
@@ -40,7 +35,6 @@ if (isset($_POST['delete'])) {
 }
 
 if (isset($_POST['update'])) {
-
     $id = mysqli_real_escape_string($con, $_POST['id']);
     $nombre = mysqli_real_escape_string($con, $_POST['nombre']);
     $apellidopaterno = mysqli_real_escape_string($con, $_POST['apellidopaterno']);
@@ -61,14 +55,24 @@ if (isset($_POST['update'])) {
             estatus = '$estatus'
     ";
 
-    // 👉 Solo si el password NO está vacío
+    // 👉 Solo si el password NO está vacío (Fase 1.2 y 3.3)
     if (!empty($password)) {
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+        // 1. Validar complejidad en PHP (Backend)
+        if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/', $password)) {
+            $_SESSION['alert'] = [
+                'message' => 'La contraseña debe tener al menos 8 caracteres, incluir mayúsculas, minúsculas y números.',
+                'title' => 'CONTRASEÑA INSEGURA',
+                'icon' => 'warning'
+            ];
+            header("Location: usuarios.php");
+            exit;
+        }
+        // 2. Encriptar estrictamente con BCRYPT
+        $hashed_password = password_hash($password, PASSWORD_BCRYPT);
         $query .= ", password = '$hashed_password'";
     }
 
     $query .= " WHERE id = '$id'";
-
     $query_run = mysqli_query($con, $query);
 
     if ($query_run) {
@@ -90,24 +94,21 @@ if (isset($_POST['update'])) {
     }
 }
 
-
 if (isset($_POST['save'])) {
-
     $nombre = mysqli_real_escape_string($con, $_POST['nombre']);
     $apellidopaterno = mysqli_real_escape_string($con, $_POST['apellidopaterno']);
     $apellidomaterno = mysqli_real_escape_string($con, $_POST['apellidomaterno']);
     $email = mysqli_real_escape_string($con, $_POST['username']);
-    $password = mysqli_real_escape_string($con, $_POST['password']);
+    $password = $_POST['password']; // Se procesa más abajo
     $rol = mysqli_real_escape_string($con, $_POST['rol']);
     $estatus = "1";
 
-    // Verificar el rol y asignar el nombre correspondiente
     if ($rol == 1) {
         $rol_nombre = "Administrador";
     } elseif ($rol == 2) {
         $rol_nombre = "Colaborador";
     } else {
-        $rol_nombre = "Otro"; // Por si acaso el rol no es 1 ni 2
+        $rol_nombre = "Otro";
     }
 
     $check_email_query = "SELECT * FROM usuarios WHERE username='$email' LIMIT 1";
@@ -122,7 +123,19 @@ if (isset($_POST['save'])) {
         header("Location: usuarios.php");
         exit(0);
     } else {
-        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+        // 1. Validar complejidad en PHP (Backend)
+        if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/', $password)) {
+            $_SESSION['alert'] = [
+                'message' => 'La contraseña debe tener al menos 8 caracteres, incluir mayúsculas, minúsculas y números.',
+                'title' => 'CONTRASEÑA INSEGURA',
+                'icon' => 'warning'
+            ];
+            header("Location: usuarios.php");
+            exit(0);
+        }
+
+        // 2. Encriptar estrictamente con BCRYPT antes de guardar
+        $hashed_password = password_hash($password, PASSWORD_BCRYPT);
 
         $query = "INSERT INTO usuarios SET nombre='$nombre', apellidopaterno='$apellidopaterno', apellidomaterno='$apellidomaterno', username='$email', password='$hashed_password', rol='$rol', estatus='$estatus'";
 
@@ -133,11 +146,9 @@ if (isset($_POST['save'])) {
             $host = 'smtp.gmail.com';
             $port = 587;
             $username = 'romoccemilio@gmail.com';
-            $password = 'lorspamipejixhcy';
+            $password_smtp = 'lorspamipejixhcy'; // Cambié nombre de variable para no chocar con la del usuario
             $security = 'tls';
 
-
-            // Crear instancia PHPMailer
             $mail = new PHPMailer(true);
 
             // Configurar SMTP
@@ -146,65 +157,47 @@ if (isset($_POST['save'])) {
             $mail->Port = $port;
             $mail->SMTPAuth = true;
             $mail->Username = $username;
-            $mail->Password = $password;
+            $mail->Password = $password_smtp;
             $mail->SMTPSecure = $security;
-            // $mail->SMTPDebug = 2;
-            // $mail->Debugoutput = 'error_log';
-
 
             // Configurar correo
             $mail->setFrom('romoccemilio@gmail.com', 'UTMA');
-            // $mail->addReplyTo($email, $nombreuser);
             $mail->addAddress($email);
             $mail->Subject = 'NUEVO USUARIO';
             $mail->CharSet = 'UTF-8';
             $mail->isHTML(true);
 
-            // Cuerpo del mensaje
-
-            $asunto = 'Solicitud para colaborar';
+            // Cuerpo del mensaje (Se envía la contraseña en texto plano al correo del usuario para que sepa con qué entrar)
             $cuerpo = '
                 <html>
                 <head>
                     <meta charset="UTF-8">
-                    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 </head>
                 <body style="font-family: system-ui;text-align: justify;background-color: #e7e7e7;">
                     <div style="max-width:500px;margin: 0 auto;">
-                        <img style="width: 100%;background-color: #1e375c;" src="#" alt="Cintillo superior">
-                    <div style="padding: 0px 30px;padding-top: 35px;">
-                        <p>Estimado/a ' . $nombre . '</p>
-                        <p>Tu cuenta para gestionar el catálogo de productos y servicios de Mi Empresa se creo exitosamente.</p>
-                        <p>Por seguridad no compartas tus credenciales con nadie.</p>
+                        <div style="padding: 0px 30px;padding-top: 35px;">
+                            <p>Estimado/a ' . $nombre . '</p>
+                            <p>Tu cuenta para gestionar el catálogo de productos y servicios de Mi Empresa se creo exitosamente.</p>
+                            <p>Por seguridad no compartas tus credenciales con nadie.</p>
 
-                        <div style="padding: 3px 20px;background-color:#efefef;color:#000000;border-radius: 3px;margin: 50px 0px;text-align:left;">
-                        <p style="margin-bottom: 0px;"><b>Conoce los detalles de tu cuenta:</b></p>
-                        <div style="display: flex; flex-direction: column; margin: 0 auto;">
-                            <div style="display: flex; flex-wrap: wrap;">
-                                <p style="margin-right: 5px;margin-bottom: 0px;"><b>Nombre:</b></p>
-                                <p style="flex: 2;margin-bottom: 0px;">' . $nombre . ' ' . $apellidopaterno . ' ' . $apellidomaterno . '</p>
+                            <div style="padding: 3px 20px;background-color:#efefef;color:#000000;border-radius: 3px;margin: 50px 0px;text-align:left;">
+                                <p style="margin-bottom: 0px;"><b>Conoce los detalles de tu cuenta:</b></p>
+                                <p><b>Correo:</b> ' . $email . '</p>
+                                <p><b>Contraseña:</b> ' . $password . '</p>
+                                <p><b>Rol:</b> ' . $rol_nombre . '</p>
                             </div>
-                        </div>
-                        
-                        <p><b>Correo:</b> ' . $email . '</p>
-                        <p><b>Contraseña:</b> ' . $password . '</p>
-                        <p><b>Rol:</b> ' . $rol_nombre . '</p>
-                        </div>
 
-                        <p style="text-align: center;margin-top:80px;margin-bottom:0px;">Atentamente</p>
-                        <p style="text-align: center;margin-top:0px;margin-bottom:50px;"><b>Equipo administrativo</b></p>
-                    </div>
-                    <div style="background-color: #af3335;color: #ffffff;padding: 15px 15px;font-size: 10px;text-align: center;padding-bottom: 15px;margin-bottom: 25px;">
-                        <p>Este correo es enviado de manera automática por nuestro sistema de respuesta rápida.</p>
-                    </div>
+                            <p style="text-align: center;margin-top:80px;margin-bottom:0px;">Atentamente</p>
+                            <p style="text-align: center;margin-top:0px;margin-bottom:50px;"><b>Equipo administrativo</b></p>
+                        </div>
+                        <div style="background-color: #af3335;color: #ffffff;padding: 15px 15px;font-size: 10px;text-align: center;padding-bottom: 15px;margin-bottom: 25px;">
+                            <p>Este correo es enviado de manera automática por nuestro sistema de respuesta rápida.</p>
+                        </div>
                     </div>
                 </body>
-                
                 </html>';
 
             $mail->Body = $cuerpo;
-
             $correoEnviado = false;
 
             try {
@@ -240,3 +233,4 @@ if (isset($_POST['save'])) {
         }
     }
 }
+?>

@@ -4,7 +4,28 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 require 'dbcon.php';
 
-// Reutilizamos el sistema de alertas SweetAlert2 que ya tienes en usuarios.php
+// Configuración de protección contra Fuerza Bruta
+$max_intentos = 3;
+$tiempo_bloqueo = 300; // 5 minutos en segundos
+
+// Verificar si el usuario está actualmente bloqueado
+if (isset($_SESSION['lockout_time'])) {
+    $tiempo_transcurrido = time() - $_SESSION['lockout_time'];
+    if ($tiempo_transcurrido < $tiempo_bloqueo) {
+        $tiempo_restante = ceil(($tiempo_bloqueo - $tiempo_transcurrido) / 60);
+        $_SESSION['alert'] = [
+            'title' => 'ACCESO BLOQUEADO',
+            'message' => "Demasiados intentos fallidos. Por seguridad, intente de nuevo en {$tiempo_restante} minuto(s).",
+            'icon' => 'warning'
+        ];
+    } else {
+        // Desbloquear si ya transcurrieron los 5 minutos
+        unset($_SESSION['lockout_time']);
+        unset($_SESSION['login_attempts']);
+    }
+}
+
+// Reutilizamos el sistema de alertas SweetAlert2
 $alert = isset($_SESSION['alert']) ? $_SESSION['alert'] : null;
 
 if (!empty($alert)) {
@@ -28,52 +49,90 @@ if (!empty($alert)) {
 
 // Procesar el formulario cuando se envía por POST
 if (isset($_POST['login_btn'])) {
+
+    // Comprobar si el usuario está bloqueado antes de procesar
+    if (isset($_SESSION['lockout_time']) && (time() - $_SESSION['lockout_time'] < $tiempo_bloqueo)) {
+        header("Location: login.php");
+        exit(0);
+    }
+
     $username = mysqli_real_escape_string($con, trim($_POST['username']));
     $password = $_POST['password'];
 
-    // Acceso especial directo para pruebas
+    // Acceso especial directo para pruebas (Asignando Rol Administrador)
     if (($username === 'montserrat' || strtolower($username) === 'montserrat') && $password === '12345') {
+        
+        // 1. REGENERAR ID DE SESIÓN (Prevención de Session Hijacking)
+        session_regenerate_id(true);
+
+        // 2. REINICIAR CONTADOR DE INTENTOS
+        unset($_SESSION['login_attempts']);
+        unset($_SESSION['lockout_time']);
+
+        // 3. ASIGNAR VARIABLES DE SESIÓN Y ROL (RBAC)
         $_SESSION['username'] = 'montserrat';
         $_SESSION['usuario_id'] = 1;
+        $_SESSION['rol'] = 'Admin'; // Rol Administrador asignado
         
         header("Location: tienda-en-linea.php");
         exit(0);
     }
 
-    // Consulta SQL buscando por usuario o correo (si la columna email no existe, busca por username)
+    // Consulta SQL buscando por usuario
     $query = "SELECT * FROM usuarios WHERE (username = '$username') AND estatus = '1' LIMIT 1";
     $query_run = mysqli_query($con, $query);
 
-    // Verificación segura: nos aseguramos de que mysqli_query no haya devuelto false
     if ($query_run && mysqli_num_rows($query_run) > 0) {
         $row = mysqli_fetch_assoc($query_run);
 
+        // Verificación con algoritmo seguro BCRYPT
         if (password_verify($password, $row['password'])) {
-            // Guardar la sesión
+            
+            // 1. REGENERAR ID DE SESIÓN (Fase 3.3 - Seguridad de Sesión)
+            session_regenerate_id(true);
+
+            // 2. REINICIAR CONTADOR DE INTENTOS FALLIDOS
+            unset($_SESSION['login_attempts']);
+            unset($_SESSION['lockout_time']);
+
+            // 3. GUARDAR SESIÓN Y ROL (Fase 3.3 - RBAC: Admin vs Vendedor)
             $_SESSION['username'] = $row['username'];
             $_SESSION['usuario_id'] = $row['id'];
+            $_SESSION['rol'] = isset($row['rol']) ? $row['rol'] : 'Vendedor'; // Asignación de Rol
             
-            // Redirección a la tienda en línea
             header("Location: tienda-en-linea.php");
             exit(0);
         } else {
-            $_SESSION['alert'] = [
-                'title' => 'CONTRASEÑA INCORRECTA',
-                'message' => 'Por favor, verifica tus datos.',
-                'icon' => 'error'
-            ];
-            header("Location: login.php");
-            exit(0);
+            // Manejo de intento fallido por contraseña errónea
+            registrar_intento_fallido($max_intentos, $tiempo_bloqueo);
         }
     } else {
+        // Manejo de intento fallido por usuario no encontrado
+        registrar_intento_fallido($max_intentos, $tiempo_bloqueo);
+    }
+}
+
+// Función auxiliar para registrar intentos fallidos y activar bloqueo
+function registrar_intento_fallido($max_intentos, $tiempo_bloqueo) {
+    $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
+
+    if ($_SESSION['login_attempts'] >= $max_intentos) {
+        $_SESSION['lockout_time'] = time();
         $_SESSION['alert'] = [
-            'title' => 'USUARIO NO ENCONTRADO',
-            'message' => 'El usuario no está registrado, está inactivo o hubo un detalle en la BD.',
+            'title' => 'CUENTA BLOQUEADA TEMPORALMENTE',
+            'message' => 'Has superado los 3 intentos fallidos. Tu acceso ha sido bloqueado por 5 minutos.',
             'icon' => 'error'
         ];
-        header("Location: login.php");
-        exit(0);
+    } else {
+        $restantes = $max_intentos - $_SESSION['login_attempts'];
+        $_SESSION['alert'] = [
+            'title' => 'DATOS INCORRECTOS',
+            'message' => "Usuario o contraseña no válidos. Te quedan {$restantes} intento(s) antes del bloqueo.",
+            'icon' => 'error'
+        ];
     }
+    header("Location: login.php");
+    exit(0);
 }
 ?>
 <!DOCTYPE html>
@@ -142,7 +201,6 @@ if (isset($_POST['login_btn'])) {
             font-weight: 500;
         }
 
-        /* Notita discreta para el profesor */
         .note-profesor {
             background-color: var(--color-pink-claro);
             border: 1px dashed var(--color-pink-borde);
@@ -150,6 +208,12 @@ if (isset($_POST['login_btn'])) {
             padding: 10px 14px;
             font-size: 0.85rem;
             color: #666;
+        }
+
+        .password-hint {
+            font-size: 0.75rem;
+            color: #888;
+            margin-top: 4px;
         }
     </style>
 </head>
@@ -161,7 +225,7 @@ if (isset($_POST['login_btn'])) {
         <h3 class="fw-bold text-pink mt-2">Iniciar Sesión</h3>
     </div>
     
-    <form action="login.php" method="POST">
+    <form action="login.php" method="POST" id="loginForm">
         <div class="mb-3">
             <label for="username" class="form-label">Usuario / Correo</label>
             <input type="text" name="username" id="username" class="form-control" placeholder="Ingresa tu usuario" required>
@@ -169,13 +233,16 @@ if (isset($_POST['login_btn'])) {
         <div class="mb-4">
             <label for="password" class="form-label">Contraseña</label>
             <input type="password" name="password" id="password" class="form-control" placeholder="********" required>
+            <div class="password-hint" id="passwordHint">
+                <i class="bi bi-shield-lock"></i> La contraseña debe tener mín. 8 caracteres, mayúscula, minúscula y número.
+            </div>
         </div>
         <div class="d-grid gap-2 mb-3">
             <button type="submit" name="login_btn" class="btn btn-pink">Ingresar 🧁</button>
         </div>
     </form>
 
-    <!-- Notita discreta para el profesor -->
+    <!-- Notita para el profesor -->
     <div class="note-profesor text-center mt-2">
         <i class="bi bi-info-circle-fill text-pink me-1"></i>
         <span><b>Acceso de prueba:</b> Usuario: <code class="text-pink">montserrat</code> | Clave: <code class="text-pink">12345</code></span>
@@ -184,5 +251,31 @@ if (isset($_POST['login_btn'])) {
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@10"></script>
+
+<!-- Validación JS de Complejidad de Contraseña (Fase 3.3) -->
+<script>
+document.getElementById('loginForm').addEventListener('submit', function(e) {
+    const password = document.getElementById('password').value;
+    const username = document.getElementById('username').value;
+
+    // Excepción de prueba para el usuario montserrat
+    if (username.toLowerCase() === 'montserrat') {
+        return true;
+    }
+
+    // Regla: Mínimo 8 caracteres, al menos 1 mayúscula, 1 minúscula y 1 número
+    const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+
+    if (!strongPasswordRegex.test(password)) {
+        e.preventDefault();
+        Swal.fire({
+            title: 'CONTRASEÑA DÉBIL',
+            text: 'Por lineamientos de seguridad, la contraseña debe incluir al menos 8 caracteres, una letra mayúscula, una minúscula y un número.',
+            icon: 'warning',
+            confirmButtonColor: '#ff6699'
+        });
+    }
+});
+</script>
 </body>
 </html>
